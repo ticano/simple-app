@@ -2,7 +2,7 @@ import os
 import json
 from datetime import date
 import logging
-import botocore
+from botocore.exceptions import ClientError
 import boto3
 import csv
 
@@ -56,6 +56,6 @@ def lambda_handler(event, context):
         # Upload temp file to S3
         s3_resource.Bucket(BUCKET_NAME).upload_file(TEMP_FILENAME, bucket_object)
         
-    except botocore.exceptions.ClientError as e:
-        logging.exception("Failed to put file to S3 bucket\n\n" + str(e))
+    except ClientError as e:
+        logging.exception("Failed to put file to S3 bucket\n\n" + e.response['Error']['Message'])
 

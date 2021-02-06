@@ -1,9 +1,11 @@
 import os
 import boto3
+from botocore.exceptions import ClientError
 
-from app.utils import (
+
+from utils import (
     apigateway_response,
-    apigateway_get_object_id,
+    apigateway_get_object_id
 )
 
 TABLE_NAME = os.environ["TABLE_NAME"]
@@ -18,7 +20,10 @@ def lambda_handler(event, context):
     key = {"object_id": object_id}
 
     try:
-        item = table.get_item(Key=key)["Item"]
-        return apigateway_response({"item": item})
-    except:
-        return apigateway_response({"success": False, "message": "Error getting object"}, 400)
+        item = table.get_item(Key=key)
+        if "Item" in item:
+            return apigateway_response({"item": item["Item"]})
+        else:
+            return apigateway_response({"success": False, "message": "Item not found."}, 404)
+    except ClientError as e:
+        return apigateway_response({"success": False, "message": e.response['Error']['Message']}, 500)

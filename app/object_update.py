@@ -3,8 +3,10 @@ import json
 import os
 
 import boto3
+from botocore.exceptions import ClientError
 
-from app.utils import (
+
+from utils import (
     apigateway_response,
     apigateway_get_object_id,
 )
@@ -35,6 +37,6 @@ def lambda_handler(event, context):
                 ReturnValues="UPDATED_NEW",
         ).get("Attributes")
     
-        return apigateway_response({"item": item})
-    except:
-        return apigateway_response({"success": False, "message": "Error updating object"}, 400)
+        return apigateway_response({"sucess": True})
+    except ClientError as e:
+        return apigateway_response({"success": False, "message": e.response['Error']['Message']}, 500)

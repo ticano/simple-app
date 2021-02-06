@@ -1,7 +1,8 @@
 import os
 import boto3
+from botocore.exceptions import ClientError
 
-from app.utils import apigateway_response
+from utils import apigateway_response
 
 
 TABLE_NAME = os.environ["TABLE_NAME"]
@@ -17,6 +18,6 @@ def lambda_handler(event, context):
         items = response.get('Items', [])
 
         return apigateway_response({"items": items})
-    except:
-        return apigateway_response({"success": False, "message": "Error getting objects list"}, 400)
+    except ClientError as e:
+        return apigateway_response({"success": False, "message": e.response['Error']['Message']}, 500)
 
