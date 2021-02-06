@@ -37,7 +37,7 @@ Parameters:
     GithubBranch:
         Type: String
         Description: 'Gitub repository branch'
-        Default: 'main'
+        Default: 'master'
 
 Mappings: {}
 

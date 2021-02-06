@@ -2,22 +2,110 @@
 
 This project contains source code and supporting files for a serverless application that you can deploy with the SAM CLI. It includes the following files and folders.
 
-- hello_world - Code for the application's Lambda function.
-- events - Invocation events that you can use to invoke the function.
-- tests - Unit tests for the application code. 
+- app - Code for the application's Lambda function.
 - template.yaml - A template that defines the application's AWS resources.
+- cf_pipeline - Cloudformation file to create the CI/CD pipeline to automate the stack update
 
-The application uses several AWS resources, including Lambda functions and an API Gateway API. These resources are defined in the `template.yaml` file in this project. You can update the template to add AWS resources through the same deployment process that updates your application code.
+The application uses several AWS resources, including Lambda functions, an API Gateway API and a DynamoDB table. These resources are defined in the `template.yaml` file in this project. You can update the template to add AWS resources through the same deployment process that updates your application code.
 
-If you prefer to use an integrated development environment (IDE) to build and test your application, you can use the AWS Toolkit.  
-The AWS Toolkit is an open source plug-in for popular IDEs that uses the SAM CLI to build and deploy serverless applications on AWS. The AWS Toolkit also adds a simplified step-through debugging experience for Lambda function code. See the following links to get started.
+## Deploy the sample application with CI/CD
 
-* [PyCharm](https://docs.aws.amazon.com/toolkit-for-jetbrains/latest/userguide/welcome.html)
-* [IntelliJ](https://docs.aws.amazon.com/toolkit-for-jetbrains/latest/userguide/welcome.html)
-* [VS Code](https://docs.aws.amazon.com/toolkit-for-vscode/latest/userguide/welcome.html)
-* [Visual Studio](https://docs.aws.amazon.com/toolkit-for-visual-studio/latest/user-guide/welcome.html)
+To automate the deployment process I decided to use the AWS Codepipeline because it is a managed service and also allows us to integrates easily with the other AWS services.
 
-## Deploy the sample application
+Before use it a few things are necessary:
+
+1 - A Github account
+2 - A Github repository with all this code
+3 - A Github OAuth Token with full permissions on admin:repo_hook and repo
+
+With this information you can create the Pipeline Stack using the command line or creating it using the AWS console.
+
+Using the command line:
+
+```bash
+
+aws cloudformation create-stack --stack-name code-challenge-pipeline --template-body file://cf_pipeline/code_pipeline.yaml --parameters ParameterKey=GithubToken,ParameterValue=<YOUR_GITHUB_TOKEN> ParameterKey=GithubUser,ParameterValue=<GITHUB_USERNAME> ParameterKey=GithubRepo,ParameterValue=<GITHUB_REPO> ParameterKey=GithubBranch,ParameterValue=<GITHUB_BRANCH> --capabilities=CAPABILITY_NAMED_IAM
+
+```
+
+The Pipeline has 3 stages:
+
+1 - **Source:** Used to download the Github source code from the Github repository
+2 - **ApplicationBuild:** Will package the SAM template file to be used on the Deploy stage
+3 - **ApplicationDeploy:** Will create a new cloudformation Stack that will create all the necessary resources to run the application, e.g, Lambda Functins, API GW, DynamodDB Table, S3 buckets, IAM Roles and etc.
+
+
+
+### Get the application stack Output
+
+```bash
+aws cloudformation describe-stacks --stack-name challenge-application --query='Stacks[].Outputs[].{OutputKey: OutputKey, Description: Description, OutputValue: OutputValue}' --output=table
+```
+
+Use the **EndpointDomainName** address to send the requests.
+
+
+### Test the API
+
+To test API methods you can execute the commands below:
+
+**POST** Creates a new item
+
+```bash
+curl --location --request POST '<API_GW_URL>/Prod/objects' \
+--header 'Content-Type: application/json' \
+--data-raw '{
+    "make": "Volkswagen",
+    "model": "Golf",
+    "category": "Hatchback",
+    "year": 2019
+}'
+```
+
+
+**GET** List All items
+
+```bash
+
+curl --location --request GET '<API_GW_URL>/Prod/objects'
+
+```
+
+**GET** Get an items
+
+```bash
+
+curl --location --request GET '<API_GW_URL>/Prod/objects/<object_id>'
+
+```
+Example: https://hi7htjxbja.execute-api.eu-central-1.amazonaws.com/Stage/objects/77b31ad1-62dd-4f3e-b9ff-c4a4c18173c7
+
+
+###
+**PUT** Update an Item
+
+```bash
+
+curl --location --request PUT '<API_GW_URL>/Prod/objects/<object_id>'
+
+```
+
+Example: https://hi7htjxbja.execute-api.eu-central-1.amazonaws.com/Stage/objects/77b31ad1-62dd-4f3e-b9ff-c4a4c18173c712
+
+
+**DELETE** Delete an items
+
+```bash
+
+curl --location --request DELETE '<API_GW_URL>/Prod/objects/<object_id>'
+
+```
+
+Example: https://hi7htjxbja.execute-api.eu-central-1.amazonaws.com/Stage/objects/77b31ad1-62dd-4f3e-b9ff-c4a4c18173c712
+
+
+
+## Deploy the sample application without CI/CD
 
 The Serverless Application Model Command Line Interface (SAM CLI) is an extension of the AWS CLI that adds functionality for building and testing Lambda applications. It uses Docker to run your functions in an Amazon Linux environment that matches Lambda. It can also emulate your application's build environment and API.
 
@@ -44,41 +132,7 @@ The first command will build the source of your application. The second command 
 
 You can find your API Gateway Endpoint URL in the output values displayed after deployment.
 
-## Use the SAM CLI to build and test locally
 
-Build your application with the `sam build --use-container` command.
-
-```bash
-simple-app$ sam build --use-container
-```
-
-The SAM CLI installs dependencies defined in `hello_world/requirements.txt`, creates a deployment package, and saves it in the `.aws-sam/build` folder.
-
-Test a single function by invoking it directly with a test event. An event is a JSON document that represents the input that the function receives from the event source. Test events are included in the `events` folder in this project.
-
-Run functions locally and invoke them with the `sam local invoke` command.
-
-```bash
-simple-app$ sam local invoke HelloWorldFunction --event events/event.json
-```
-
-The SAM CLI can also emulate your application's API. Use the `sam local start-api` to run the API locally on port 3000.
-
-```bash
-simple-app$ sam local start-api
-simple-app$ curl http://localhost:3000/
-```
-
-The SAM CLI reads the application template to determine the API's routes and the functions that they invoke. The `Events` property on each function's definition includes the route and method for each path.
-
-```yaml
-      Events:
-        HelloWorld:
-          Type: Api
-          Properties:
-            Path: /hello
-            Method: get
-```
 
 ## Add a resource to your application
 The application template uses AWS Serverless Application Model (AWS SAM) to define application resources. AWS SAM is an extension of AWS CloudFormation with a simpler syntax for configuring common serverless application resources such as functions, triggers, and APIs. For resources not included in [the SAM specification](https://github.com/awslabs/serverless-application-model/blob/master/versions/2016-10-31.md), you can use standard [AWS CloudFormation](https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-template-resource-type-ref.html) resource types.
@@ -95,18 +149,6 @@ simple-app$ sam logs -n HelloWorldFunction --stack-name simple-app --tail
 
 You can find more information and examples about filtering Lambda function logs in the [SAM CLI Documentation](https://docs.aws.amazon.com/serverless-application-model/latest/developerguide/serverless-sam-cli-logging.html).
 
-## Tests
-
-Tests are defined in the `tests` folder in this project. Use PIP to install the test dependencies and run tests.
-
-```bash
-simple-app$ pip install -r tests/requirements.txt --user
-# unit test
-simple-app$ python -m pytest tests/unit -v
-# integration test, requiring deploying the stack first.
-# Create the env variable AWS_SAM_STACK_NAME with the name of the stack we are testing
-simple-app$ AWS_SAM_STACK_NAME=<stack-name> python -m pytest tests/integration -v
-```
 
 ## Cleanup
 
