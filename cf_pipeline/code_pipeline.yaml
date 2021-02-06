@@ -20,6 +20,8 @@ Parameters:
     ProjectName:
         Description: 'Project Name'
         Type: String
+        Default: 'challenge'
+        
     GithubToken:
         Type: String
         Description: 'Github OAuth Token with full permissions on admin:repo_hook and repo'
@@ -31,7 +33,7 @@ Parameters:
     GithubRepo:
         Type: String
         Description: 'Gitub repository name'
-        Default: 'code-challenge'
+        Default: 'simple-app'
     GithubBranch:
         Type: String
         Description: 'Gitub repository branch'
