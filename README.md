@@ -24,15 +24,33 @@ Using the command line:
 
 ```bash
 
-aws cloudformation create-stack --stack-name code-challenge-pipeline --template-body file://cf_pipeline/code_pipeline.yaml --parameters ParameterKey=GithubToken,ParameterValue=<YOUR_GITHUB_TOKEN> ParameterKey=GithubUser,ParameterValue=<GITHUB_USERNAME> ParameterKey=GithubRepo,ParameterValue=<GITHUB_REPO> ParameterKey=GithubBranch,ParameterValue=<GITHUB_BRANCH> --capabilities=CAPABILITY_NAMED_IAM
+aws cloudformation create-stack --stack-name code-challenge-pipeline \ 
+--template-body file://cf_pipeline/code_pipeline.yaml \
+--parameters ParameterKey=GithubToken,ParameterValue=<YOUR_GITHUB_TOKEN> \
+ParameterKey=GithubUser,ParameterValue=<GITHUB_USERNAME> \
+ParameterKey=GithubRepo,ParameterValue=<GITHUB_REPO> \
+ParameterKey=GithubBranch,ParameterValue=<GITHUB_BRANCH> \
+--capabilities=CAPABILITY_NAMED_IAM
 
 ```
 
+**Check the stack creation status**
+
+
+```bash
+
+aws cloudformation describe-stack-events --stack-name=code-challenge-pipeline \
+ --query='StackEvents[].{LogicalResourceId: LogicalResourceId, ResourceType: ResourceType, ResourceStatus: ResourceStatus}' \
+--output=table
+
+```
+
+
 The Pipeline has 3 stages:
 
-1 - **Source:** Used to download the Github source code from the Github repository
-2 - **ApplicationBuild:** Will package the SAM template file to be used on the Deploy stage
-3 - **ApplicationDeploy:** Will create a new cloudformation Stack that will create all the necessary resources to run the application, e.g, Lambda Functins, API GW, DynamodDB Table, S3 buckets, IAM Roles and etc.
+* **Source:** Used to download the Github source code from the Github repository
+* **ApplicationBuild:** Will package the SAM template file to be used on the Deploy stage
+* **ApplicationDeploy:** Will create a new cloudformation Stack that will create all the necessary resources to run the application, e.g, Lambda Functins, API GW, DynamodDB Table, S3 buckets, IAM Roles and etc.
 
 
 
