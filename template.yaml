@@ -1,0 +1,244 @@
+---
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+
+Description: 'Code challenge Application'
+
+Metadata:
+    AWS::CloudFormation::Interface:
+        ParameterGroups:
+          - Label: {default: 'Application Parameters'}
+            Parameters:
+              - KeyPrefix
+
+Parameters:
+    KeyPrefix:
+        Description: 'Prefix used in s3 bucket to store summary files'
+        Type: String
+        Default: 'summary-files'
+
+
+Globals:
+    Function:
+        Runtime: python3.7
+        MemorySize: 128
+        Timeout: 3
+        Environment:
+            Variables:
+                BUCKET_NAME: !Ref UploadBucket
+                KEY_PREFIX: !Ref KeyPrefix
+                TABLE_NAME: !Ref DynamoDBTable
+
+
+Resources:
+    #
+    # Functions
+    #
+    ObjectsListFunction:
+        Type: AWS::Serverless::Function
+        Properties:
+            Role: !GetAtt ObjectsApiFunctionRole.Arn
+            CodeUri: app/
+            Handler: objects_list.lambda_handler
+            Events:
+                ObjectsApi:
+                    Type: Api
+                    Properties:
+                        RestApiId: !Ref RestApi
+                        Path: /objects
+                        Method: GET
+
+    ObjectsCreateFunction:
+        Type: AWS::Serverless::Function
+        Properties:
+            Role: !GetAtt ObjectsApiFunctionRole.Arn
+            CodeUri: app/
+            Handler: objects_create.lambda_handler
+            Events:
+                ObjectsApi:
+                    Type: Api
+                    Properties:
+                        RestApiId: !Ref RestApi
+                        Path: /objects
+                        Method: POST
+
+    ObjectGetFunction:
+        Type: AWS::Serverless::Function
+        Properties:
+            Role: !GetAtt ObjectsApiFunctionRole.Arn
+            CodeUri: app/
+            Handler: object_get.lambda_handler
+            Events:
+                ObjectsApi:
+                    Type: Api
+                    Properties:
+                        RestApiId: !Ref RestApi
+                        Path: /objects/{object_id}
+                        Method: GET
+
+    ObjectUpdateFunction:
+        Type: AWS::Serverless::Function
+        Properties:
+            Role: !GetAtt ObjectsApiFunctionRole.Arn
+            CodeUri: app/
+            Handler: object_update.lambda_handler
+            Events:
+                ObjectsApi:
+                    Type: Api
+                    Properties:
+                        RestApiId: !Ref RestApi
+                        Path: /objects/{object_id}
+                        Method: PUT
+
+    ObjectDeleteFunction:
+        Type: AWS::Serverless::Function
+        Properties:
+            Role: !GetAtt ObjectsApiFunctionRole.Arn
+            CodeUri: app/
+            Handler: object_delete.lambda_handler
+            Events:
+                ObjectsApi:
+                    Type: Api
+                    Properties:
+                        RestApiId: !Ref RestApi
+                        Path: /objects/{object_id}
+                        Method: DELETE
+    
+    SummaryFunction:
+        Type: AWS::Serverless::Function
+        Properties:
+            Role: !GetAtt ObjectsApiFunctionRole.Arn
+            CodeUri: app/
+            Handler: object_summary.lambda_handler
+
+    ScheduledRule: 
+        Type: AWS::Events::Rule
+        Properties: 
+            Description: "Scheduled Summary Rule"
+            ScheduleExpression: "cron(0 0 ? * 1 *)" #run every Sunday at 00:00
+            State: "ENABLED"
+            Targets: 
+                - 
+                    Arn: !GetAtt
+                        - "SummaryFunction"
+                        - "Arn"
+                    Id: "SummaryFunction"
+
+    PermissionForEventsToInvokeLambda: 
+        Type: AWS::Lambda::Permission
+        Properties: 
+            FunctionName: !Ref SummaryFunction
+            Action: "lambda:InvokeFunction"
+            Principal: "events.amazonaws.com"
+            SourceArn: !GetAtt ScheduledRule.Arn
+
+    ObjectsApiFunctionRole:
+        Type: AWS::IAM::Role
+        Properties:
+            AssumeRolePolicyDocument:
+                Version: '2012-10-17'
+                Statement:
+                  - Effect: 'Allow'
+                    Principal: {Service: ['lambda.amazonaws.com'] }
+                    Action: ['sts:AssumeRole']
+            ManagedPolicyArns:
+              - 'arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole'
+            Policies:
+              - PolicyName: dynamodb-crud
+                PolicyDocument:
+                    Version: '2012-10-17'
+                    Statement:
+                      - Effect: Allow
+                        Action:
+                          - 'dynamodb:GetItem'
+                          - 'dynamodb:PutItem'
+                          - 'dynamodb:DeleteItem'
+                          - 'dynamodb:UpdateItem'
+                          - 'dynamodb:Query'
+                          - 'dynamodb:Scan'
+                        Resource:
+                          - !GetAtt DynamoDBTable.Arn
+              - PolicyName: s3-crud
+                PolicyDocument:
+                    Version: '2012-10-17'
+                    Statement:
+                      - Effect: Allow
+                        Action:
+                          - 's3:GetObject'
+                          - 's3:PutObject'
+                          - 's3:DeleteObject'
+                        Resource:
+                          - !Sub '${UploadBucket.Arn}/${KeyPrefix}/*'
+    #
+    # Api
+    #
+    RestApi:
+        Type: AWS::Serverless::Api
+        Properties:
+            StageName: Prod
+            MethodSettings:
+              - HttpMethod: '*'
+                ResourcePath: '/*'
+
+
+    #
+    # Storage
+    #
+    UploadBucket:
+        Type: AWS::S3::Bucket
+        DeletionPolicy: Retain
+        UpdateReplacePolicy: Retain
+        Properties:
+            AccessControl: Private
+            PublicAccessBlockConfiguration:
+                BlockPublicAcls: True
+                BlockPublicPolicy: True
+                IgnorePublicAcls: True
+                RestrictPublicBuckets: True
+            
+
+    DynamoDBTable:
+        Type: AWS::DynamoDB::Table
+        Properties:
+            BillingMode: PAY_PER_REQUEST
+            AttributeDefinitions:
+              - {AttributeName: 'object_id', AttributeType: 'S'}
+            KeySchema:
+              - {AttributeName: 'object_id', KeyType: 'HASH'}
+
+    
+
+    
+Outputs:
+    #API GW
+    EndpointDomainName:
+        Description: 'API Gateway endpoint URL for Prod stage'
+        Value: !Sub 'https://${RestApi}.execute-api.${AWS::Region}.amazonaws.com/Prod/'
+
+    # Functions
+    ObjectsListFunction:
+        Description: 'Objects List Lambda Function ARN'
+        Value: !GetAtt ObjectsListFunction.Arn
+    ObjectdCreateFunction:
+        Description: 'Objects Create Lambda Function ARN'
+        Value: !GetAtt ObjectsCreateFunction.Arn
+    ObjectsGetFunction:
+        Description: 'Object Get Lambda Function ARN'
+        Value: !GetAtt ObjectGetFunction.Arn
+    ObjectsUpdateFunction:
+        Description: 'Object Update Lambda Function ARN'
+        Value: !GetAtt ObjectUpdateFunction.Arn
+    ObjectdDeteteFunction:
+        Description: 'Object Detete Lambda Function ARN'
+        Value: !GetAtt ObjectDeleteFunction.Arn
+    SummaryFunction:
+        Description: 'Object summary Lambda Function ARN'
+        Value: !GetAtt SummaryFunction.Arn    
+
+    # Storage
+    UploadBucket:
+        Description: 'Bucket where files are stored'
+        Value: !Ref UploadBucket
+    DynamoDBTable:
+        Description: 'Table where metadata are stored'
+        Value: !Ref DynamoDBTable

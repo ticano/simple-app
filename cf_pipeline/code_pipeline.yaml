@@ -1,0 +1,338 @@
+---
+AWSTemplateFormatVersion: '2010-09-09'
+
+Description: 'Code challenge Pipeline stack'
+
+Metadata:
+    AWS::CloudFormation::Interface:
+        ParameterGroups:
+          - Label: {default: 'Stack Parameters'}
+            Parameters:
+              - ProjectName
+          - Label: {default: 'Github Parameters'}
+            Parameters:
+              - GithubToken
+              - GithubUser
+              - GithubRepo
+              - GithubBranch
+
+Parameters:
+    ProjectName:
+        Description: 'Project Name'
+        Type: String
+    GithubToken:
+        Type: String
+        Description: 'Github OAuth Token with full permissions on admin:repo_hook and repo'
+        NoEcho: true
+    GithubUser:
+        Type: String
+        Description: 'Github user where the repository lives'
+        Default: 'ticano'
+    GithubRepo:
+        Type: String
+        Description: 'Gitub repository name'
+        Default: 'code-challenge'
+    GithubBranch:
+        Type: String
+        Description: 'Gitub repository branch'
+        Default: 'main'
+
+Mappings: {}
+
+Conditions: {}
+
+Resources:
+
+    BuildArtifactsBucket:
+        Type: AWS::S3::Bucket
+        Properties:
+            BucketName: !Sub ${ProjectName}-build-bucket
+            BucketEncryption:
+                ServerSideEncryptionConfiguration:
+                    - ServerSideEncryptionByDefault:
+                          SSEAlgorithm: AES256
+            PublicAccessBlockConfiguration:
+                BlockPublicAcls: yes
+                BlockPublicPolicy: yes
+                IgnorePublicAcls: yes
+                RestrictPublicBuckets: yes
+
+    Pipeline:
+        Type: AWS::CodePipeline::Pipeline
+        Properties:
+            RoleArn: !GetAtt CodePipelineRole.Arn
+            ArtifactStore:
+                Location: !Ref BuildArtifactsBucket
+                Type: S3
+            Stages:
+              - Name: Source
+                Actions:
+                  - Name: SourceGithub
+                    ActionTypeId:
+                        Category: Source
+                        Owner: ThirdParty
+                        Provider: GitHub
+                        Version: '1'
+                    Configuration:
+                        Owner: !Ref GithubUser
+                        Repo: !Ref GithubRepo
+                        Branch: !Ref GithubBranch
+                        OAuthToken: !Ref GithubToken
+                    OutputArtifacts:
+                      - Name: SourceCodeAsZip
+                    RunOrder: 1
+              - Name: ApplicationBuild
+                Actions:
+                  - Name: ApplicationCodeBuild
+                    ActionTypeId:
+                        Category: Build
+                        Owner: AWS
+                        Provider: CodeBuild
+                        Version: '1'
+                    Configuration:
+                        ProjectName: !Ref ApplicationCodeBuildProject
+                    InputArtifacts:
+                      - Name: SourceCodeAsZip
+                    OutputArtifacts:
+                      - Name: ApplicationBuildArtifactAsZip
+                    RunOrder: 1
+              - Name: ApplicationDeploy
+                Actions:
+                  - Name: ApplicationCloudformation
+                    ActionTypeId:
+                        Category: Deploy
+                        Owner: AWS
+                        Provider: CloudFormation
+                        Version: '1'
+                    Configuration:
+                        ActionMode: CREATE_UPDATE
+                        Capabilities: CAPABILITY_AUTO_EXPAND,CAPABILITY_IAM
+                        RoleArn: !GetAtt CloudFormationExecutionRole.Arn
+                        StackName: !Sub '${ProjectName}-application'
+                        TemplatePath: ApplicationBuildArtifactAsZip::packaged.yaml
+                        OutputFileName: ApplicationOutputs.json
+                    InputArtifacts:
+                      - Name: ApplicationBuildArtifactAsZip
+                    OutputArtifacts:
+                      - Name: ApplicationCloudFormationOutputsAsZip
+                    RunOrder: 1
+
+    PipelineWebhook:
+        Type: AWS::CodePipeline::Webhook
+        Properties:
+            TargetPipeline: !Ref Pipeline
+            TargetPipelineVersion: !GetAtt Pipeline.Version
+            TargetAction: SourceGithub
+            RegisterWithThirdParty: true
+            Authentication: GITHUB_HMAC
+            AuthenticationConfiguration:
+                SecretToken: !Ref GithubToken
+            Filters:
+              - JsonPath: "$.ref"
+                MatchEquals: refs/heads/{Branch}
+
+
+    CodePipelineRole:
+        Type: AWS::IAM::Role
+        Properties:
+            AssumeRolePolicyDocument:
+                Version: '2012-10-17'
+                Statement:
+                  - Effect: Allow
+                    Principal: {Service: ['codepipeline.amazonaws.com']}
+                    Action: ['sts:AssumeRole']
+            Path: /
+            Policies:
+              - PolicyName: s3_pipeline
+                PolicyDocument:
+                  Version: '2012-10-17'
+                  Statement:
+                    - Effect: Allow
+                      Action:
+                        - 's3:Get*'
+                        - 's3:Put*'
+                      Resource: !Sub 'arn:aws:s3:::${BuildArtifactsBucket}/*'
+              - PolicyName: logs
+                PolicyDocument:
+                  Version: '2012-10-17'
+                  Statement:
+                    - Effect: Allow
+                      Action:
+                        - 'logs:CreateLogGroup'
+                        - 'logs:CreateLogStream'
+                        - 'logs:PutLogEvents'
+                      Resource: arn:aws:logs:*:*:*
+
+              - PolicyName: codebuild
+                PolicyDocument:
+                    Version: '2012-10-17'
+                    Statement:
+                      - Effect: Allow
+                        Action:
+                          - 'codebuild:BatchGetBuilds'
+                          - 'codebuild:StartBuild'
+                        Resource:
+                          - !Sub '${ApplicationCodeBuildProject.Arn}'
+              - PolicyName: cloudformation
+                PolicyDocument:
+                    Version: '2012-10-17'
+                    Statement:
+                      - Effect: Allow
+                        Action:
+                          - 'cloudformation:DescribeStacks'
+                          - 'cloudformation:CreateStack'
+                          - 'cloudformation:UpdateStack'
+                          - 'cloudformation:DeleteStack'
+                        Resource:
+                           - !Sub 'arn:${AWS::Partition}:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/${ProjectName}-application/*'
+                      - Effect: Allow
+                        Action:
+                          - 'iam:PassRole'
+                        Resource:
+                          - !GetAtt CloudFormationExecutionRole.Arn
+
+    CloudFormationExecutionRole:
+        Type: AWS::IAM::Role
+        Properties:
+            AssumeRolePolicyDocument:
+                Version: '2012-10-17'
+                Statement:
+                  - Effect: Allow
+                    Principal: {Service: ['cloudformation.amazonaws.com']}
+                    Action: ['sts:AssumeRole']
+            Policies:
+              - PolicyName: s3
+                PolicyDocument:
+                  Version: '2012-10-17'
+                  Statement:
+                    - Effect: Allow
+                      Action:
+                        - 's3:*'
+                      Resource:
+                        - !Sub 'arn:${AWS::Partition}:s3:::*'
+                        - !Sub 'arn:${AWS::Partition}:s3:::*/*'
+              - PolicyName: logs
+                PolicyDocument:
+                  Version: '2012-10-17'
+                  Statement:
+                    - Effect: Allow
+                      Action:
+                        - 'logs:CreateLogGroup'
+                        - 'logs:CreateLogStream'
+                        - 'logs:PutLogEvents'
+                      Resource: arn:aws:logs:*:*:*
+              - PolicyName: cloudformation
+                PolicyDocument:
+                    Statement:
+                      - Effect: Allow
+                        Action:
+                          - 'cloudformation:CreateChangeSet'
+                        Resource:
+                            - !Sub 'arn:${AWS::Partition}:cloudformation:${AWS::Region}:aws:transform/Serverless-2016-10-31'
+              - PolicyName: iam
+                PolicyDocument:
+                    Statement:
+                      - Effect: Allow
+                        Action:
+                          - 'iam:AttachRolePolicy'
+                          - 'iam:CreateRole'
+                          - 'iam:UpdateRole'
+                          - 'iam:DeleteRole'
+                          - 'iam:DeleteRolePolicy'
+                          - 'iam:DetachRolePolicy'
+                          - 'iam:GetRole'
+                          - 'iam:GetRolePolicy'
+                          - 'iam:PassRole'
+                          - 'iam:PutRolePolicy'
+                        Resource:
+                          - !Sub 'arn:${AWS::Partition}:iam::${AWS::AccountId}:role/${ProjectName}*'
+              - PolicyName: api-gateway
+                PolicyDocument:
+                    Statement:
+                      - Effect: Allow
+                        Action:
+                          - 'apigateway:GET'
+                          - 'apigateway:POST'
+                          - 'apigateway:PATCH'
+                          - 'apigateway:PUT'
+                          - 'apigateway:DELETE'
+                          - 'apigateway:UpdateRestApiPolicy'
+                        Resource:
+                          - !Sub 'arn:${AWS::Partition}:apigateway:${AWS::Region}::/domainnames'
+                          - !Sub 'arn:${AWS::Partition}:apigateway:${AWS::Region}::/domainnames/*'
+                          - !Sub 'arn:${AWS::Partition}:apigateway:${AWS::Region}::/restapis'
+                          - !Sub 'arn:${AWS::Partition}:apigateway:${AWS::Region}::/restapis/*'
+              - PolicyName: lambda
+                PolicyDocument:
+                    Statement:
+                      - Effect: Allow
+                        Action:
+                          - 'lambda:*'
+                        Resource:
+                          - !Sub 'arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:${ProjectName}*'
+              - PolicyName: dynamodb
+                PolicyDocument:
+                    Statement:
+                      - Effect: Allow
+                        Action:
+                          - 'dynamodb:*'
+                        Resource:
+                          - !Sub 'arn:${AWS::Partition}:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${ProjectName}*'
+              - PolicyName: events
+                PolicyDocument:
+                    Statement:
+                      - Effect: Allow
+                        Action:
+                          - 'events:*'
+                        Resource: 'arn:aws:events:*:*:rule/*'
+
+    ApplicationCodeBuildProject:
+        Type: AWS::CodeBuild::Project
+        Properties:
+            ServiceRole: !GetAtt CodeBuildServiceRole.Arn
+            Source:
+                Type: CODEPIPELINE
+                BuildSpec: app/buildspec.yaml
+            Artifacts:
+                Type: CODEPIPELINE
+            Environment:
+                Type: LINUX_CONTAINER
+                ComputeType: BUILD_GENERAL1_SMALL
+                Image: aws/codebuild/standard:2.0
+                EnvironmentVariables:
+                  - {Name: BUILD_OUTPUT_BUCKET, Value: !Ref BuildArtifactsBucket}
+                  - {Name: BUILD_OUTPUT_PREFIX, Value: !Sub '${ProjectName}/application-codebuild-artifact'}
+
+    CodeBuildServiceRole:
+        Type: AWS::IAM::Role
+        Properties:
+            AssumeRolePolicyDocument:
+                Version: '2012-10-17'
+                Statement:
+                  - Effect: Allow
+                    Principal: {Service: ['codebuild.amazonaws.com']}
+                    Action: ['sts:AssumeRole']
+            Path: /
+            Policies:
+              - PolicyName: logs
+                PolicyDocument:
+                  Version: '2012-10-17'
+                  Statement:
+                    - Effect: Allow
+                      Action:
+                        - 'logs:CreateLogGroup'
+                        - 'logs:CreateLogStream'
+                        - 'logs:PutLogEvents'
+                      Resource: arn:aws:logs:*:*:*
+              - PolicyName: s3_codebuild
+                PolicyDocument:
+                  Version: '2012-10-17'
+                  Statement:
+                    - Effect: Allow
+                      Action:
+                        - 's3:Get*'
+                        - 's3:Put*'
+                      Resource:
+                        - !Sub 'arn:aws:s3:::${BuildArtifactsBucket}/*'
+
+Outputs: {}
